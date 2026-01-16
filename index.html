@@ -11,4 +11,161 @@
     table { border-collapse: collapse; width: 100%; margin-top: 12px; }
     th, td { border: 1px solid #ddd; padding: 6px 8px; vertical-align: top; }
     th { background: #f6f6f6; position: sticky; top: 0; z-index: 1; }
-    .controls { margin-
+    .controls { margin-top: 10px; display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    select, button, input { padding: 6px 8px; }
+    #status { margin-left:auto; }
+    .error { color: #b00020; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1 style="margin:0">gpt.xlsx</h1>
+    <div class="meta">Source: <a id="srcLink" target="_blank" rel="noreferrer">raw</a></div>
+    <div class="meta" id="lastUpdated">Last loaded: —</div>
+  </header>
+
+  <div class="controls">
+    <label>
+      Sheet:
+      <select id="sheetSelect"></select>
+    </label>
+
+    <button id="reloadBtn">Reload now</button>
+
+    <label class="meta">
+      Auto-refresh (seconds):
+      <input id="refreshSec" type="number" min="5" step="5" value="60" style="width:90px" />
+    </label>
+
+    <div class="meta" id="status">Idle</div>
+  </div>
+
+  <div id="error" class="error"></div>
+  <div id="tableWrap"></div>
+
+  <!-- SheetJS -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script>
+    // Change these only if your repo/file name changes
+    const RAW_XLSX_URL = "https://github.com/ahentzschel/gpt/raw/main/gpt.xlsx";
+
+    const srcLink = document.getElementById("srcLink");
+    const sheetSelect = document.getElementById("sheetSelect");
+    const tableWrap = document.getElementById("tableWrap");
+    const errorEl = document.getElementById("error");
+    const lastUpdatedEl = document.getElementById("lastUpdated");
+    const statusEl = document.getElementById("status");
+    const reloadBtn = document.getElementById("reloadBtn");
+    const refreshSecInput = document.getElementById("refreshSec");
+
+    srcLink.href = RAW_XLSX_URL;
+
+    let workbook = null;
+    let timer = null;
+
+    function setStatus(s) { statusEl.textContent = s; }
+
+    function clearError() { errorEl.textContent = ""; }
+    function showError(msg) { errorEl.textContent = msg; }
+
+    function arrayBufferToUint8(ab) { return new Uint8Array(ab); }
+
+    function renderSheet(sheetName) {
+      if (!workbook) return;
+
+      const ws = workbook.Sheets[sheetName];
+      if (!ws) return;
+
+      // Convert to 2D array (rows/cols)
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
+
+      if (!rows.length) {
+        tableWrap.innerHTML = "<p>No data in this sheet.</p>";
+        return;
+      }
+
+      // Build HTML table
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const tbody = document.createElement("tbody");
+
+      const headerRow = rows[0];
+      const trh = document.createElement("tr");
+      headerRow.forEach((cell) => {
+        const th = document.createElement("th");
+        th.textContent = (cell ?? "").toString();
+        trh.appendChild(th);
+      });
+      thead.appendChild(trh);
+
+      for (let r = 1; r < rows.length; r++) {
+        const tr = document.createElement("tr");
+        rows[r].forEach((cell) => {
+          const td = document.createElement("td");
+          td.textContent = (cell ?? "").toString();
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      }
+
+      table.appendChild(thead);
+      table.appendChild(tbody);
+
+      tableWrap.innerHTML = "";
+      tableWrap.appendChild(table);
+    }
+
+    async function loadWorkbook() {
+      clearError();
+      setStatus("Loading...");
+
+      try {
+        // cache-bust so you always get latest commit file
+        const url = RAW_XLSX_URL + (RAW_XLSX_URL.includes("?") ? "&" : "?") + "t=" + Date.now();
+        const res = await fetch(url, { cache: "no-store" });
+        if (!res.ok) throw new Error("Fetch failed: " + res.status + " " + res.statusText);
+
+        const ab = await res.arrayBuffer();
+        const data = arrayBufferToUint8(ab);
+
+        workbook = XLSX.read(data, { type: "array" });
+
+        // Populate sheets dropdown
+        sheetSelect.innerHTML = "";
+        workbook.SheetNames.forEach((name) => {
+          const opt = document.createElement("option");
+          opt.value = name;
+          opt.textContent = name;
+          sheetSelect.appendChild(opt);
+        });
+
+        // Render first sheet by default
+        const first = workbook.SheetNames[0];
+        sheetSelect.value = first;
+        renderSheet(first);
+
+        lastUpdatedEl.textContent = "Last loaded: " + new Date().toLocaleString();
+        setStatus("Loaded");
+      } catch (e) {
+        setStatus("Error");
+        showError(String(e && e.stack ? e.stack : e));
+      }
+    }
+
+    function startAutoRefresh() {
+      if (timer) clearInterval(timer);
+      const sec = Number(refreshSecInput.value || 60);
+      if (!Number.isFinite(sec) || sec < 5) return;
+
+      timer = setInterval(loadWorkbook, sec * 1000);
+    }
+
+    sheetSelect.addEventListener("change", () => renderSheet(sheetSelect.value));
+    reloadBtn.addEventListener("click", loadWorkbook);
+    refreshSecInput.addEventListener("change", startAutoRefresh);
+
+    // Initial load
+    loadWorkbook().then(startAutoRefresh);
+  </script>
+</body>
+</html>
