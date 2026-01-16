@@ -21,4 +21,150 @@
   <header>
     <h1 style="margin:0">gpt.xlsx</h1>
     <div class="meta">Source: <a id="srcLink" target="_blank" rel="noreferrer">raw</a></div>
-    <div class="me
+    <div class="meta" id="lastUpdated">Last loaded: —</div>
+  </header>
+
+  <div class="controls">
+    <label>
+      Sheet:
+      <select id="sheetSelect"></select>
+    </label>
+
+    <button id="reloadBtn">Reload now</button>
+
+    <label class="meta">
+      Auto-refresh (seconds):
+      <input id="refreshSec" type="number" min="5" step="5" value="60" style="width:90px" />
+    </label>
+
+    <div class="meta" id="status">Booting…</div>
+  </div>
+
+  <div id="error" class="error"></div>
+  <div id="tableWrap"></div>
+
+  <!-- Load SheetJS first -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <script>
+    // Use raw.githubusercontent.com to avoid CORS/redirect issues
+    const RAW_XLSX_URL = "https://raw.githubusercontent.com/ahentzschel/gpt/main/gpt.xlsx";
+
+    const srcLink = document.getElementById("srcLink");
+    const sheetSelect = document.getElementById("sheetSelect");
+    const tableWrap = document.getElementById("tableWrap");
+    const errorEl = document.getElementById("error");
+    const lastUpdatedEl = document.getElementById("lastUpdated");
+    const statusEl = document.getElementById("status");
+    const reloadBtn = document.getElementById("reloadBtn");
+    const refreshSecInput = document.getElementById("refreshSec");
+
+    srcLink.href = RAW_XLSX_URL;
+
+    let workbook = null;
+    let timer = null;
+
+    function setStatus(s) { statusEl.textContent = s; }
+    function clearError() { errorEl.textContent = ""; }
+    function showError(msg) { errorEl.textContent = msg; console.error(msg); }
+
+    function renderSheet(sheetName) {
+      if (!workbook) return;
+      const ws = workbook.Sheets[sheetName];
+      if (!ws) return;
+
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
+
+      if (!rows.length) {
+        tableWrap.innerHTML = "<p>No data in this sheet.</p>";
+        return;
+      }
+
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const tbody = document.createElement("tbody");
+
+      const headerRow = rows[0] || [];
+      const trh = document.createElement("tr");
+      headerRow.forEach((cell) => {
+        const th = document.createElement("th");
+        th.textContent = (cell ?? "").toString();
+        trh.appendChild(th);
+      });
+      thead.appendChild(trh);
+
+      for (let r = 1; r < rows.length; r++) {
+        const tr = document.createElement("tr");
+        (rows[r] || []).forEach((cell) => {
+          const td = document.createElement("td");
+          td.textContent = (cell ?? "").toString();
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      }
+
+      table.appendChild(thead);
+      table.appendChild(tbody);
+      tableWrap.innerHTML = "";
+      tableWrap.appendChild(table);
+    }
+
+    async function loadWorkbook() {
+      clearError();
+
+      if (!window.XLSX) {
+        setStatus("Error");
+        showError("SheetJS (XLSX) failed to load. CDN blocked?");
+        return;
+      }
+
+      setStatus("Loading…");
+
+      try {
+        const url = RAW_XLSX_URL + "?t=" + Date.now();
+        const res = await fetch(url, { cache: "no-store" });
+        if (!res.ok) throw new Error("Fetch failed: " + res.status + " " + res.statusText);
+
+        const ab = await res.arrayBuffer();
+        workbook = XLSX.read(new Uint8Array(ab), { type: "array" });
+
+        sheetSelect.innerHTML = "";
+        workbook.SheetNames.forEach((name) => {
+          const opt = document.createElement("option");
+          opt.value = name;
+          opt.textContent = name;
+          sheetSelect.appendChild(opt);
+        });
+
+        const first = workbook.SheetNames[0];
+        if (!first) throw new Error("Workbook has no sheets.");
+        sheetSelect.value = first;
+        renderSheet(first);
+
+        lastUpdatedEl.textContent = "Last loaded: " + new Date().toLocaleString();
+        setStatus("Loaded");
+      } catch (e) {
+        setStatus("Error");
+        showError(String(e && e.stack ? e.stack : e));
+      }
+    }
+
+    function startAutoRefresh() {
+      if (timer) clearInterval(timer);
+      const sec = Number(refreshSecInput.value || 60);
+      if (!Number.isFinite(sec) || sec < 5) return;
+      timer = setInterval(loadWorkbook, sec * 1000);
+    }
+
+    sheetSelect.addEventListener("change", () => renderSheet(sheetSelect.value));
+    reloadBtn.addEventListener("click", loadWorkbook);
+    refreshSecInput.addEventListener("change", startAutoRefresh);
+
+    // Ensure this runs after DOM is ready
+    window.addEventListener("load", () => {
+      loadWorkbook();
+      startAutoRefresh();
+    });
+  </script>
+</body>
+</html>
